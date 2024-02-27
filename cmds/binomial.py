@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from scipy.optimize import fsolve
-from treasury_cmds import compound_rate
+from .treasury_cmds import compound_rate
 
 
 def format_bintree(df,style='{:.2f}'):
