@@ -11,6 +11,8 @@ class FIBinomialModel():
         self.__rate_tree: pd.DataFrame = None
         self.__bond_tree: pd.DataFrame = None
         self.__swap_tree: pd.DataFrame = None
+        self.__cashflow_tree: pd.DataFrame = None
+        self.__valuation_tree: pd.DataFrame = None
 
         self.__dt: float = None
         self.__T: float = None
@@ -82,6 +84,68 @@ class FIBinomialModel():
         swap_tree.loc[0,0] = Z * np.array([self.p_star,1-self.p_star])@ swap_tree[self.__dt].values
         self.__swap_tree = swap_tree
         return swap_tree
+
+    def construct_bond_cftree(self, T, compound, cpn, cpn_freq=2, face=100) -> pd.DataFrame:
+        step = int(compound/cpn_freq)
+
+        cftree = self.initialize_empty_rate_tree(1/compound, T)
+        cftree.iloc[:,:] = 0
+        cftree.iloc[:, -1:0:-step] = (cpn/cpn_freq) * face
+        
+        # final cashflow is accounted for in payoff function
+        # drop final period cashflow from cashflow tree
+        cftree = cftree.iloc[:-1,:-1]
+        
+        self.__cashflow_tree = cftree
+        return cftree
+
+    def bintree_pricing(self, payoff=None, ratetree=None, undertree=None,cftree=None, dt=None, pstars=None, timing=None, cfdelay=False,style='european',Tamerican=0):
+    
+        if payoff is None:
+            payoff = lambda r: 0
+        
+        if undertree is None:
+            undertree = ratetree
+            
+        if cftree is None:
+            cftree = pd.DataFrame(0, index=undertree.index, columns=undertree.columns)
+            
+        if pstars is None:
+            pstars = pd.Series(.5, index=undertree.columns)
+
+        if dt is None:
+            dt = undertree.columns.to_series().diff().mean()
+            dt = undertree.columns[1]-undertree.columns[0]
+        
+        if timing == 'deferred':
+            cfdelay = True
+        
+        if dt<.25 and cfdelay:
+            display('Warning: cfdelay setting only delays by dt.')
+            
+        valuetree = pd.DataFrame(dtype=float, index=undertree.index, columns=undertree.columns)
+
+        for steps_back, t in enumerate(valuetree.columns[-1::-1]):
+            if steps_back==0:                           
+                valuetree[t] = payoff(undertree[t])
+                if cfdelay:
+                    valuetree[t] *= np.exp(-ratetree[t]*dt)
+            else:
+                for state in valuetree[t].index[:-1]:
+                    val_avg = pstars[t] * valuetree.iloc[state,-steps_back] + (1-pstars[t]) * valuetree.iloc[state+1,-steps_back]
+                    
+                    if cfdelay:
+                        cf = cftree.loc[state,t]
+                    else:                    
+                        cf = cftree.iloc[state,-steps_back]
+                    
+                    valuetree.loc[state,t] = np.exp(-ratetree.loc[state,t]*dt) * (val_avg + cf)
+
+                if style=='american':
+                    if t>= Tamerican:
+                        valuetree.loc[:,t] = np.maximum(valuetree.loc[:,t],payoff(undertree.loc[:,t]))
+            
+        return valuetree
 
 
     def display_rate_tree(self) -> pd.DataFrame:
