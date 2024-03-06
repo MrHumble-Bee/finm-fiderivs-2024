@@ -34,16 +34,16 @@ def cap_vol_to_price_rev(flatvol, strike, fwds, discounts, dt=.25, notional=100)
 
 
 
-def blacks_formula(T,vol,strike,fwd,discount=1,isCall=True):
+def blacks_formula(ttm_option, impl_volatilities, strikes ,fwd,discount=1,isCall=True):
         
-    sigT = vol * np.sqrt(T)
-    d1 = (1/sigT) * np.log(fwd/strike) + .5*sigT
+    sigT = impl_volatilities * np.sqrt(ttm_option)
+    d1 = (1/sigT) * np.log(fwd/strikes) + .5*sigT
     d2 = d1-sigT
     
     if isCall:
-        val = discount * (fwd * norm.cdf(d1) - strike * norm.cdf(d2))
+        val = discount * (fwd * norm.cdf(d1) - strikes * norm.cdf(d2))
     else:
-        val = discount * (strike * norm.cdf(-d2) - fwd * norm.cdf(-d1))
+        val = discount * (strikes * norm.cdf(-d2) - fwd * norm.cdf(-d1))
     return val
 
 
