@@ -37,12 +37,15 @@ def payoff_swap(r,swaprate,freqswap,ispayer=True,N=100):
 
 
 
-def replicating_port(quotes,undertree,derivtree,dt=None,Ncash=100):
+def replicating_port(quotes, underlying_payoff_tree, derivative_payoff_tree, dt=None, Ncash=100):
     if dt is None:
-        dt = undertree.columns[1] - undertree.columns[0]
+        dt = underlying_payoff_tree.columns[1] - underlying_payoff_tree.columns[0]
     
-    delta = (derivtree.loc[0,dt] - derivtree.loc[1,dt]) / (undertree.loc[0,dt] - undertree.loc[1,dt]) 
-    cash = (derivtree.loc[0,dt] - delta * undertree.loc[0,dt]) / Ncash
+    # sensitivity of deriv to underlying
+    delta = (derivative_payoff_tree.loc[0,dt] - derivative_payoff_tree.loc[1,dt]) / (underlying_payoff_tree.loc[0,dt] - underlying_payoff_tree.loc[1,dt]) 
+
+    # amount in cash for replicating portfolio
+    cash = (derivative_payoff_tree.loc[0,dt] - delta * underlying_payoff_tree.loc[0,dt]) / Ncash
     
     out = pd.DataFrame({'positions':[cash,delta], 'value':quotes},index=['cash','under'])
     out.loc['derivative','value'] = out['positions'] @ out['value']
@@ -93,13 +96,30 @@ def bintree_pricing_old(payoff=None, ratetree=None, undertree=None,cftree=None, 
 
 
 
-def bintree_pricing(payoff=None, ratetree=None, undertree=None,cftree=None, dt=None, pstars=None, timing=None, cfdelay=False,style='european',Tamerican=0):
-    
+def bintree_pricing(payoff=None, interest_rate_tree=None, undertree=None,cftree=None, dt=None, pstars=None, timing=None, cfdelay=False,style='european',Tamerican=0):
+    """
+    Function to price options using binomial tree method.
+
+    Parameters:
+    - payoff (function): The payoff function of the option. Defaults to a function that returns 0.
+    - interest_rate_tree (pandas DataFrame): Interest rate tree. Defaults to None.
+    - undertree (pandas DataFrame): Underlying asset price tree. Defaults to ratetree if not provided.
+    - cftree (pandas DataFrame): Cash flow tree. Defaults to a DataFrame of zeros with the same shape as undertree.
+    - dt (float): Time step. Defaults to the mean of differences between columns of undertree.
+    - pstars (pandas Series): Probabilities of upward movement. Defaults to a Series of 0.5 with column names from undertree.
+    - timing (str): Timing of cash flow, 'deferred' or None. If 'deferred', cfdelay is set to True. Defaults to None.
+    - cfdelay (bool): Flag to delay cash flow. Defaults to False.
+    - style (str): Style of option, 'european' or 'american'. Defaults to 'european'.
+    - Tamerican (float): Time limit for American options. Defaults to 0.
+
+    Returns:
+    - valuetree (pandas DataFrame): DataFrame containing option values at each node of the binomial tree.
+    """
     if payoff is None:
         payoff = lambda r: 0
     
     if undertree is None:
-        undertree = ratetree
+        undertree = interest_rate_tree
         
     if cftree is None:
         cftree = pd.DataFrame(0, index=undertree.index, columns=undertree.columns)
@@ -123,17 +143,20 @@ def bintree_pricing(payoff=None, ratetree=None, undertree=None,cftree=None, dt=N
         if steps_back==0:                           
             valuetree[t] = payoff(undertree[t])
             if cfdelay:
-                valuetree[t] *= np.exp(-ratetree[t]*dt)
+                valuetree[t] *= np.exp(-interest_rate_tree[t]*dt)
         else:
             for state in valuetree[t].index[:-1]:
+                # Expectation
                 val_avg = pstars[t] * valuetree.iloc[state,-steps_back] + (1-pstars[t]) * valuetree.iloc[state+1,-steps_back]
                 
+                # Compute Cashflow
                 if cfdelay:
                     cf = cftree.loc[state,t]
                 else:                    
                     cf = cftree.iloc[state,-steps_back]
-                
-                valuetree.loc[state,t] = np.exp(-ratetree.loc[state,t]*dt) * (val_avg + cf)
+
+                # Discounted Expectation + any cashflows
+                valuetree.loc[state,t] = np.exp(-interest_rate_tree.loc[state,t]*dt) * (val_avg + cf)
 
             if style=='american':
                 if t>= Tamerican:
@@ -224,7 +247,7 @@ def incremental_BDT_pricing(tree, theta, sigma_new, dt=None):
     return model_price
 
 
-def estimate_theta(sigmas,quotes_zeros,dt=None,T=None):
+def estimate_theta(sigmas: pd.Series, quotes_zeros:pd.Series,dt=None,T=None) -> tuple[pd.Series, pd.DataFrame]:
     if dt is None:
         dt = quotes_zeros.index[1] - quotes_zeros.index[0]
 
@@ -261,10 +284,10 @@ def estimate_theta(sigmas,quotes_zeros,dt=None,T=None):
 
 
 
-def construct_bond_cftree(T, compound, cpn, cpn_freq=2, face=100):
-    step = int(compound/cpn_freq)
+def construct_bond_cftree(T, rate_compound_freq, cpn, cpn_freq=2, face=100):
+    step = int(rate_compound_freq/cpn_freq)
 
-    cftree = construct_rate_tree(1/compound, T)
+    cftree = construct_rate_tree(1/rate_compound_freq, T)
     cftree.iloc[:,:] = 0
     cftree.iloc[:, -1:0:-step] = (cpn/cpn_freq) * face
     
@@ -285,17 +308,22 @@ def construct_bond_cftree(T, compound, cpn, cpn_freq=2, face=100):
 #     return accinttree
 
 
-def construct_accint(timenodes, freq, cpn, cpn_freq=2, face=100):
+def construct_accint(timenodes_columns, time_nodes_freq_per_year, annual_cpn_in_pct, cpn_freq=2, face=100):
+    """
+    timenodes_columns: Column names of rate trees.
+    time_nodes_freq_per_year: Number of time periods in tree per year
+    cpn_freq_per_year: Number of coupon payments per year 
+    """
 
-    mod = freq/cpn_freq
-    cpn_pmnt = face * cpn/cpn_freq
+    mod = time_nodes_freq_per_year/cpn_freq
+    cpn_pmnt = face * annual_cpn_in_pct/cpn_freq
 
-    temp = np.arange(len(timenodes)) % mod
+    temp = np.arange(len(timenodes_columns)) % mod
     # shift to ensure end is considered coupon (not necessarily start)
     temp = (temp - temp[-1] - 1) % mod
     temp = cpn_pmnt * temp.astype(float)/mod
 
-    accint = pd.Series(temp,index=timenodes)
+    accint = pd.Series(temp,index=timenodes_columns)
 
     return accint
 
@@ -339,14 +367,14 @@ def construct_swap_cftree(ratetree, swaprate, freqswap=1, T=None, freq=None, isp
 def price_callable(quotes, fwdvols, cftree, accint, wrapper_bond, payoff_call,cleanstrike=True):
 
     theta, ratetree = estimate_theta(fwdvols,quotes)
-    bondtree = bintree_pricing(payoff=wrapper_bond, ratetree=ratetree, cftree= cftree)
+    bondtree = bintree_pricing(payoff=wrapper_bond, interest_rate_tree=ratetree, cftree= cftree)
     if cleanstrike:
         cleantree = np.maximum(bondtree.subtract(accint,axis=1),0)
         undertree = cleantree
     else:
         undertree = bondtree
         
-    calltree = bintree_pricing(payoff=payoff_call, ratetree=ratetree, undertree= undertree, style='american')
+    calltree = bintree_pricing(payoff=payoff_call, interest_rate_tree=ratetree, undertree= undertree, style='american')
     callablebondtree = bondtree - calltree
     model_price_dirty = callablebondtree.loc[0,0]
 

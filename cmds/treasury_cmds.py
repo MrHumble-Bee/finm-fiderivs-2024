@@ -217,16 +217,24 @@ def intrate_to_discount(intrate, maturity, n_compound=None):
 
 
 
-def compound_rate(intrate,compound_input,compound_output):
-    
-#    outrate = intrate[['maturity']]
-    
+def compound_rate(interest_rate, compound_input, compound_output):
+    """
+    Function to convert interest rates compounded at different intervals.
+
+    Parameters:
+    - interest_rate (float): The interest rate to be converted.
+    - compound_input (int or None): Number of times interest is compounded per unit of time for the input rate. Defaults to None.
+    - compound_output (int or None): Number of times interest is compounded per unit of time for the output rate. Defaults to None.
+
+    Returns:
+    - outrate (float): The converted interest rate.
+    """
     if compound_input is None:
-        outrate = compound_output * (np.exp(intrate/compound_output) - 1)
+        outrate = compound_output * (np.exp(interest_rate/compound_output) - 1)
     elif compound_output is None:
-        outrate = compound_input * np.log(1 + intrate/compound_input)
+        outrate = compound_input * np.log(1 + interest_rate/compound_input)
     else:
-        outrate = ((1 + intrate/compound_input) ** (compound_input/compound_output) - 1) * compound_output
+        outrate = ((1 + interest_rate/compound_input) ** (compound_input/compound_output) - 1) * compound_output
 
     return outrate
 
